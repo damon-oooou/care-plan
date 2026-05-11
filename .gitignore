@@ -1,0 +1,58 @@
+### ===== Java ===== ###
+*.class
+*.jar
+*.war
+*.ear
+
+### ===== Maven ===== ###
+target/
+!.mvn/wrapper/maven-wrapper.jar
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+
+### ===== Gradle（如果你用 Gradle 的话）===== ###
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+### ===== Spring Boot ===== ###
+# 本地环境配置（含数据库密码、API Key）
+application-local.yml
+application-local.properties
+
+### ===== IntelliJ IDEA ===== ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+### ===== VS Code ===== ###
+.vscode/
+
+### ===== Eclipse ===== ###
+.classpath
+.project
+.settings/
+bin/
+
+### ===== 操作系统 ===== ###
+.DS_Store
+Thumbs.db
+desktop.ini
+
+### ===== 环境变量 / 敏感信息 ===== ###
+.env
+.env.local
+.env.*.local
+
+### ===== 日志 ===== ###
+*.log
+logs/
+
+### ===== 上传文件目录（运行时产生）===== ###
+uploads/
+
