@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Care Plan Generator</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #f4f1ec;
+            --card: #ffffff;
+            --primary: #1a5c3a;
+            --primary-hover: #14472d;
+            --accent: #d4a853;
+            --text: #2c2c2c;
+            --text-light: #6b6b6b;
+            --border: #ddd5c9;
+            --error: #b33a3a;
+            --radius: 10px;
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* ---- Header ---- */
+        .header {
+            background: var(--primary);
+            color: white;
+            padding: 28px 40px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .header svg { flex-shrink: 0; }
+        .header h1 {
+            font-family: 'Source Serif 4', serif;
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .header p {
+            font-size: 13px;
+            opacity: 0.75;
+            margin-top: 2px;
+        }
+
+        /* ---- Layout ---- */
+        .container {
+            max-width: 860px;
+            margin: 36px auto;
+            padding: 0 24px 60px;
+        }
+
+        /* ---- Form Card ---- */
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 36px 40px;
+            margin-bottom: 28px;
+        }
+        .card-title {
+            font-family: 'Source Serif 4', serif;
+            font-size: 19px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--accent);
+            display: inline-block;
+        }
+
+        /* ---- Form Fields ---- */
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px; }
+        .full { grid-column: 1 / -1; }
+
+        .field { margin-bottom: 18px; }
+        .field label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: var(--text);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .field label .req { color: var(--error); margin-left: 2px; }
+
+        .field input,
+        .field textarea {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 15px;
+            color: var(--text);
+            background: #fafaf7;
+            transition: border-color 0.2s;
+        }
+        .field input:focus,
+        .field textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: #fff;
+        }
+        .field textarea { resize: vertical; min-height: 90px; }
+        .field .hint {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+
+        /* ---- Submit Button ---- */
+        .submit-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 14px 36px;
+            border-radius: 8px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .submit-btn:hover { background: var(--primary-hover); }
+        .submit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* ---- Spinner ---- */
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 2.5px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ---- Result Card ---- */
+        #result {
+            display: none;
+            animation: fadeUp 0.4s ease;
+        }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(16px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--accent);
+        }
+        .result-header h2 {
+            font-family: 'Source Serif 4', serif;
+            font-size: 19px;
+            font-weight: 600;
+        }
+        .result-meta {
+            font-size: 12px;
+            color: var(--text-light);
+        }
+
+        .care-plan-content {
+            font-size: 15px;
+            line-height: 1.75;
+            white-space: pre-wrap;
+            color: var(--text);
+        }
+
+        .download-btn {
+            margin-top: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: transparent;
+            color: var(--primary);
+            border: 1.5px solid var(--primary);
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .download-btn:hover {
+            background: var(--primary);
+            color: white;
+        }
+
+        /* ---- Error ---- */
+        .error-msg {
+            display: none;
+            background: #fdf2f2;
+            border: 1px solid #f0c0c0;
+            color: var(--error);
+            padding: 14px 18px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        @media (max-width: 600px) {
+            .row { grid-template-columns: 1fr; }
+            .card { padding: 24px 20px; }
+            .header { padding: 20px 20px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="rgba(255,255,255,0.15)"/>
+        <path d="M18 8 L18 28 M12 14 L18 8 L24 14" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M10 20h16v6a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2v-6z" stroke="white" stroke-width="1.5" fill="none"/>
+    </svg>
+    <div>
+        <h1>Care Plan Generator</h1>
+        <p>Specialty Pharmacy &mdash; Clinical Care Plan Tool</p>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- Error -->
+    <div class="error-msg" id="errorMsg"></div>
+
+    <!-- Form -->
+    <form id="orderForm" class="card">
+        <div class="card-title">Patient &amp; Order Information</div>
+
+        <div class="row">
+            <div class="field">
+                <label>Patient First Name <span class="req">*</span></label>
+                <input type="text" name="patientFirstName" required>
+            </div>
+            <div class="field">
+                <label>Patient Last Name <span class="req">*</span></label>
+                <input type="text" name="patientLastName" required>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="field">
+                <label>MRN <span class="req">*</span></label>
+                <input type="text" name="mrn" required placeholder="6-digit number">
+                <div class="hint">Unique 6-digit patient identifier</div>
+            </div>
+            <div class="field">
+                <label>Primary Diagnosis (ICD-10) <span class="req">*</span></label>
+                <input type="text" name="primaryDiagnosis" required placeholder="e.g. E11.65">
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="field">
+                <label>Referring Provider <span class="req">*</span></label>
+                <input type="text" name="referringProvider" required>
+            </div>
+            <div class="field">
+                <label>Provider NPI <span class="req">*</span></label>
+                <input type="text" name="referringProviderNpi" required placeholder="10-digit number">
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="field">
+                <label>Medication Name <span class="req">*</span></label>
+                <input type="text" name="medicationName" required>
+            </div>
+            <div class="field">
+                <label>Additional Diagnoses</label>
+                <input type="text" name="additionalDiagnoses" placeholder="Comma-separated ICD-10 codes">
+                <div class="hint">e.g. I10, E78.5</div>
+            </div>
+        </div>
+
+        <div class="field full">
+            <label>Medication History</label>
+            <input type="text" name="medicationHistory" placeholder="Comma-separated medication names">
+        </div>
+
+        <div class="field full">
+            <label>Patient Records / Notes</label>
+            <textarea name="patientRecords" placeholder="Paste relevant clinical notes here..."></textarea>
+        </div>
+
+        <button type="submit" class="submit-btn" id="submitBtn">
+            <span id="btnText">Generate Care Plan</span>
+            <div class="spinner" id="spinner"></div>
+        </button>
+    </form>
+
+    <!-- Result -->
+    <div class="card" id="result">
+        <div class="result-header">
+            <h2>Generated Care Plan</h2>
+            <span class="result-meta" id="resultMeta"></span>
+        </div>
+        <div class="care-plan-content" id="carePlanContent"></div>
+        <button class="download-btn" id="downloadBtn">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 2v9m0 0L5 8m3 3l3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Download as Text
+        </button>
+    </div>
+
+</div>
+
+<script>
+const form = document.getElementById('orderForm');
+const submitBtn = document.getElementById('submitBtn');
+const btnText = document.getElementById('btnText');
+const spinner = document.getElementById('spinner');
+const errorMsg = document.getElementById('errorMsg');
+const resultDiv = document.getElementById('result');
+const carePlanContent = document.getElementById('carePlanContent');
+const resultMeta = document.getElementById('resultMeta');
+const downloadBtn = document.getElementById('downloadBtn');
+
+let lastCarePlan = '';
+let lastPatientName = '';
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorMsg.style.display = 'none';
+    resultDiv.style.display = 'none';
+
+    // 收集表单数据
+    const fd = new FormData(form);
+    const payload = {
+        patientFirstName: fd.get('patientFirstName'),
+        patientLastName: fd.get('patientLastName'),
+        mrn: fd.get('mrn'),
+        primaryDiagnosis: fd.get('primaryDiagnosis'),
+        referringProvider: fd.get('referringProvider'),
+        referringProviderNpi: fd.get('referringProviderNpi'),
+        medicationName: fd.get('medicationName'),
+        additionalDiagnoses: fd.get('additionalDiagnoses')
+            ? fd.get('additionalDiagnoses').split(',').map(s => s.trim()).filter(Boolean)
+            : [],
+        medicationHistory: fd.get('medicationHistory')
+            ? fd.get('medicationHistory').split(',').map(s => s.trim()).filter(Boolean)
+            : [],
+        patientRecords: fd.get('patientRecords') || ''
+    };
+
+    // 显示 loading
+    submitBtn.disabled = true;
+    btnText.textContent = 'Generating...';
+    spinner.style.display = 'block';
+
+    try {
+        const res = await fetch('/api/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(data.error || 'Something went wrong');
+        }
+
+        // 显示结果
+        lastCarePlan = data.carePlan;
+        lastPatientName = payload.patientFirstName + ' ' + payload.patientLastName;
+        carePlanContent.textContent = data.carePlan;
+        resultMeta.textContent = 'Order #' + data.id + ' · ' + new Date(data.createdAt).toLocaleString();
+        resultDiv.style.display = 'block';
+        resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    } catch (err) {
+        errorMsg.textContent = err.message;
+        errorMsg.style.display = 'block';
+    } finally {
+        submitBtn.disabled = false;
+        btnText.textContent = 'Generate Care Plan';
+        spinner.style.display = 'none';
+    }
+});
+
+// 下载 care plan 为 txt 文件
+downloadBtn.addEventListener('click', () => {
+    const blob = new Blob([lastCarePlan], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'care-plan-' + lastPatientName.replace(/\s+/g, '-').toLowerCase() + '.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+});
+</script>
+
+</body>
+</html>
