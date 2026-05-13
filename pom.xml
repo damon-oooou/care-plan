@@ -15,17 +15,30 @@
     <artifactId>care-plan</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>care-plan</name>
-    <description>Care Plan Generator MVP</description>
+    <description>Care Plan Generator</description>
 
     <properties>
         <java.version>17</java.version>
     </properties>
 
     <dependencies>
-        <!-- Spring Boot Web（内含 Tomcat + Jackson） -->
+        <!-- Spring Boot Web -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Spring Data JPA（ORM，操作数据库用的） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- PostgreSQL 驱动 -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- 读取 .env 文件 -->

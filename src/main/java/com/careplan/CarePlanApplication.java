@@ -1,15 +1,19 @@
 package com.careplan;
 
+import com.careplan.entity.*;
+import com.careplan.repository.*;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.http.*;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 @SpringBootApplication
 @RestController
@@ -20,46 +24,56 @@ public class CarePlanApplication {
     }
 
     // ============================================================
-    // 内存存储（代替数据库，HashMap 就够了）
+    // 注入 Repository（代替之前的 HashMap）
     // ============================================================
-    private final Map<String, Order> orders = new ConcurrentHashMap<>();
+    @Autowired private PatientRepository patientRepo;
+    @Autowired private ProviderRepository providerRepo;
+    @Autowired private CareOrderRepository orderRepo;
+    @Autowired private CarePlanRepository carePlanRepo;
+
+    @Value("${anthropic.api-key}")
+    private String apiKey;
 
     // ============================================================
-    // 数据结构（全部用内部类，不分文件）
+    // DTO（请求和响应的数据结构）
     // ============================================================
 
-    // --- 前端提交的请求体 ---
     public static class OrderRequest {
         public String patientFirstName;
         public String patientLastName;
-        public String mrn;                      // 6位数字
+        public String mrn;
         public String referringProvider;
-        public String referringProviderNpi;      // 10位数字
-        public String primaryDiagnosis;          // ICD-10
-        public List<String> additionalDiagnoses; // ICD-10 列表
+        public String referringProviderNpi;
+        public String primaryDiagnosis;
+        public List<String> additionalDiagnoses;
         public String medicationName;
         public List<String> medicationHistory;
-        public String patientRecords;            // 纯文本，MVP 不搞文件上传
+        public String patientRecords;
     }
 
-    // --- 存储的订单 ---
-    public static class Order {
-        public String id;
-        public OrderRequest request;
-        public String carePlan;                  // LLM 生成的 care plan 文本
-        public LocalDateTime createdAt;
-    }
-
-    // --- 返回给前端的响应 ---
     public static class OrderResponse {
-        public String id;
+        public Long id;
+        public String patientName;
+        public String mrn;
+        public String providerName;
+        public String providerNpi;
+        public String primaryDiagnosis;
+        public String medicationName;
         public String carePlan;
+        public String status;
         public String createdAt;
 
-        public OrderResponse(Order order) {
-            this.id = order.id;
-            this.carePlan = order.carePlan;
-            this.createdAt = order.createdAt.toString();
+        public OrderResponse(CareOrder order) {
+            this.id = order.getId();
+            this.patientName = order.getPatient().getFirstName() + " " + order.getPatient().getLastName();
+            this.mrn = order.getPatient().getMrn();
+            this.providerName = order.getProvider().getName();
+            this.providerNpi = order.getProvider().getNpi();
+            this.primaryDiagnosis = order.getPrimaryDiagnosis();
+            this.medicationName = order.getMedicationName();
+            this.carePlan = order.getCarePlan() != null ? order.getCarePlan().getContent() : null;
+            this.status = order.getCarePlan() != null ? order.getCarePlan().getStatus() : "no_plan";
+            this.createdAt = order.getCreatedAt().toString();
         }
     }
 
@@ -68,52 +82,117 @@ public class CarePlanApplication {
     // ============================================================
 
     /**
-     * POST /api/orders
-     * 接收表单数据 → 调用 LLM 生成 care plan → 存内存 → 返回结果
-     * 同步调用，用户提交后等 LLM 返回，直接显示 care plan
+     * POST /api/orders — 创建订单 + 生成 care plan
      */
     @PostMapping("/api/orders")
     public ResponseEntity<?> createOrder(@RequestBody OrderRequest request) {
-        // 1. 组装 prompt
-        String prompt = buildPrompt(request);
 
-        // 2. 调用 LLM 生成 care plan
-        String carePlan;
+        // 1. 查找或创建 Patient
+        Patient patient = patientRepo.findByMrn(request.mrn)
+                .orElseGet(() -> {
+                    Patient p = new Patient();
+                    p.setFirstName(request.patientFirstName);
+                    p.setLastName(request.patientLastName);
+                    p.setMrn(request.mrn);
+                    return patientRepo.save(p);
+                });
+
+        // 2. 查找或创建 Provider
+        Provider provider = providerRepo.findByNpi(request.referringProviderNpi)
+                .orElseGet(() -> {
+                    Provider prov = new Provider();
+                    prov.setName(request.referringProvider);
+                    prov.setNpi(request.referringProviderNpi);
+                    return providerRepo.save(prov);
+                });
+
+        // 3. 创建 Order
+        CareOrder order = new CareOrder();
+        order.setPatient(patient);
+        order.setProvider(provider);
+        order.setPrimaryDiagnosis(request.primaryDiagnosis);
+        order.setMedicationName(request.medicationName);
+        order.setPatientRecords(request.patientRecords);
+
+        if (request.additionalDiagnoses != null && !request.additionalDiagnoses.isEmpty()) {
+            order.setAdditionalDiagnoses(String.join(",", request.additionalDiagnoses));
+        }
+        if (request.medicationHistory != null && !request.medicationHistory.isEmpty()) {
+            order.setMedicationHistory(String.join(",", request.medicationHistory));
+        }
+
+        order = orderRepo.save(order);
+
+        // 4. 创建 Care Plan（初始状态 pending）
+        CarePlan carePlan = new CarePlan();
+        carePlan.setOrder(order);
+        carePlan.setStatus("pending");
+        carePlanRepo.save(carePlan);
+
+        // 5. 调用 LLM 生成 care plan
+        String prompt = buildPrompt(request);
         try {
-            carePlan = callLLM(prompt);
+            carePlan.setStatus("processing");
+            carePlanRepo.save(carePlan);
+
+            String carePlanText = callLLM(prompt);
+
+            carePlan.setContent(carePlanText);
+            carePlan.setStatus("completed");
+            carePlanRepo.save(carePlan);
         } catch (Exception e) {
+            carePlan.setStatus("failed");
+            carePlanRepo.save(carePlan);
             return ResponseEntity.status(500)
                     .body(Map.of("error", "LLM 调用失败: " + e.getMessage()));
         }
 
-        // 3. 存到内存
-        Order order = new Order();
-        order.id = UUID.randomUUID().toString().substring(0, 8);
-        order.request = request;
-        order.carePlan = carePlan;
-        order.createdAt = LocalDateTime.now();
-        orders.put(order.id, order);
+        // 重新加载 order 以包含 carePlan
+        order.setCarePlan(carePlan);
 
-        // 4. 返回
         return ResponseEntity.ok(new OrderResponse(order));
     }
 
     /**
-     * GET /api/orders
-     * 查看所有订单（调试用）
+     * GET /api/orders — 查看所有订单
      */
     @GetMapping("/api/orders")
     public List<OrderResponse> listOrders() {
-        return orders.values().stream()
+        return orderRepo.findAllByOrderByCreatedAtDesc().stream()
                 .map(OrderResponse::new)
                 .toList();
     }
 
+    /**
+     * GET /api/orders/{id} — 查看单个订单
+     */
+    @GetMapping("/api/orders/{id}")
+    public ResponseEntity<?> getOrder(@PathVariable Long id) {
+        return orderRepo.findById(id)
+                .map(order -> ResponseEntity.ok(new OrderResponse(order)))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * GET /api/patients — 查看所有患者
+     */
+    @GetMapping("/api/patients")
+    public List<Patient> listPatients() {
+        return patientRepo.findAll();
+    }
+
+    /**
+     * GET /api/providers — 查看所有 Provider
+     */
+    @GetMapping("/api/providers")
+    public List<Provider> listProviders() {
+        return providerRepo.findAll();
+    }
+
     // ============================================================
-    // LLM 调用（用 Anthropic Claude API）
+    // LLM 调用
     // ============================================================
 
-    // Anthropic API 的请求/响应结构
     public static class ClaudeMessage {
         public String role;
         public String content;
@@ -141,9 +220,6 @@ public class CarePlanApplication {
         public List<ClaudeContentBlock> content;
     }
 
-    @org.springframework.beans.factory.annotation.Value("${anthropic.api-key}")
-    private String apiKey;
-    
     private String callLLM(String prompt) {
         RestTemplate restTemplate = new RestTemplate();
 
