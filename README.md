@@ -1,80 +1,103 @@
-# Care Plan Generator — MVP
+# Care Plan Generator
 
-最小可运行版本：前端表单 → Spring Boot API → 调用 Claude LLM → 生成 Care Plan → 下载
+专科药房 Care Plan 自动生成系统。医疗助理填写患者信息，系统调用 LLM 自动生成 Care Plan。
+
+## 技术栈
+
+- Java 17 + Spring Boot 3.3
+- Spring Data JPA + PostgreSQL
+- Anthropic Claude API (claude-haiku-4-5-20251001)
+- 前端：原生 HTML/CSS/JS
 
 ## 项目结构
 
 ```
 care-plan/
-├── pom.xml                                          # Maven 配置，只依赖 spring-boot-starter-web
+├── sql/
+│   ├── 01_schema.sql                          # 建表语句（4 张表）
+│   └── 02_mock_data.sql                       # Mock 数据（5 医生、10 患者、12 订单）
 ├── src/main/java/com/careplan/
-│   └── CarePlanApplication.java                     # 全部后端代码（一个文件搞定）
+│   ├── CarePlanApplication.java               # 主程序 + REST API
+│   ├── entity/                                # JPA 实体（对应数据库表）
+│   │   ├── Patient.java
+│   │   ├── Provider.java
+│   │   ├── CareOrder.java
+│   │   └── CarePlan.java
+│   └── repository/                            # JPA Repository（数据库查询）
+│       ├── PatientRepository.java
+│       ├── ProviderRepository.java
+│       ├── CareOrderRepository.java
+│       └── CarePlanRepository.java
 ├── src/main/resources/
-│   ├── application.properties                       # 配置文件
+│   ├── application.properties                 # Spring Boot 配置
 │   └── static/
-│       └── index.html                               # 前端页面
+│       └── index.html                         # 前端页面
+├── docs/
+│   └── care-plan-design-doc.md                # 设计文档
+├── .env                                       # 环境变量（不上传 GitHub）
+├── .env.example                               # 环境变量模板
+├── .gitignore
+├── pom.xml
 └── README.md
 ```
+
+## 数据库设计
+
+4 张表：
+
+- **patient** — 患者（first_name, last_name, mrn, date_of_birth）
+- **provider** — 处方医生（name, npi）
+- **care_order** — 订单（关联 patient + provider，含诊断、用药信息）
+- **care_plan** — LLM 生成的 Care Plan（关联 order，含 status 状态跟踪）
+
+Care Plan 状态流转：`pending → processing → completed / failed`
 
 ## 快速启动
 
 ### 1. 前提条件
+
 - Java 17+
-- Maven 3.8+（或者用项目自带的 mvnw）
-- 一个 Anthropic API Key
+- Maven 3.8+
+- PostgreSQL 16+
 
-### 2. 设置 API Key
+### 2. 创建数据库并导入数据
 
-**Windows PowerShell:**
-```powershell
-$env:ANTHROPIC_API_KEY="sk-ant-your-key-here"
-```
-
-**Mac / Linux:**
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-your-key-here"
+psql -U postgres -c "CREATE DATABASE careplan;"
+psql -U postgres -d careplan -f sql/01_schema.sql
+psql -U postgres -d careplan -f sql/02_mock_data.sql
 ```
 
-### 3. 启动项目
+### 3. 配置环境变量
+
+复制 `.env.example` 为 `.env`，填入真实值：
+
+```
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+DB_NAME=careplan
+DB_USERNAME=postgres
+DB_PASSWORD=your-password
+```
+
+### 4. 启动
 
 ```bash
 mvn spring-boot:run
 ```
 
-### 4. 打开浏览器
-
-访问 http://localhost:8080 ，填写表单，点击 Generate Care Plan。
+打开 http://localhost:8080
 
 ## API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | /api/orders | 提交订单，生成 care plan |
-| GET  | /api/orders | 查看所有订单（调试用） |
+| POST | /api/orders | 创建订单，生成 Care Plan |
+| GET  | /api/orders | 查看所有订单（按时间倒序） |
+| GET  | /api/orders/{id} | 查看单个订单 |
+| GET  | /api/patients | 查看所有患者 |
+| GET  | /api/providers | 查看所有 Provider |
 
-### POST /api/orders 请求体示例
+## 版本历史
 
-```json
-{
-  "patientFirstName": "John",
-  "patientLastName": "Doe",
-  "mrn": "123456",
-  "referringProvider": "Dr. Smith",
-  "referringProviderNpi": "1234567890",
-  "primaryDiagnosis": "E11.65",
-  "medicationName": "Metformin",
-  "additionalDiagnoses": ["I10", "E78.5"],
-  "medicationHistory": ["Lisinopril", "Atorvastatin"],
-  "patientRecords": "Patient has a history of..."
-}
-```
-
-## 当前限制（MVP）
-
-- 数据存在内存里，重启就没了
-- 没有输入校验（不检查 MRN 6位、NPI 10位等）
-- 没有重复检测
-- 没有用户认证
-- LLM 调用是同步的，网络慢的时候要等
-
-这些都会在后续版本逐步加上。
+- **v2** — 升级到 PostgreSQL，加了 JPA Entity/Repository，Care Plan 状态跟踪
+- **v1** — MVP，内存存储（HashMap），单文件
