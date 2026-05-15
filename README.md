@@ -138,6 +138,9 @@ mvn spring-boot:run
 
 ## 版本历史
 
-- **v3** — 异步架构：Redis 队列，提交后立刻返回，Worker 待实现
+## 版本历史
+
+- **v4** — Worker 消费 Redis 队列，调用 LLM，写回数据库，失败重试（最多 3 次，指数退避）
+- **v3** — 异步架构：Redis 队列，提交后立刻返回
 - **v2** — PostgreSQL + JPA，Care Plan 状态跟踪
 - **v1** — MVP，内存存储（HashMap），同步 LLM 调用
