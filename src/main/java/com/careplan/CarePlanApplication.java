@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
@@ -30,6 +31,7 @@ public class CarePlanApplication {
     @Autowired private ProviderRepository providerRepo;
     @Autowired private CareOrderRepository orderRepo;
     @Autowired private CarePlanRepository carePlanRepo;
+    @Autowired private StringRedisTemplate redisTemplate;
 
     @Value("${anthropic.api-key}")
     private String apiKey;
@@ -82,7 +84,8 @@ public class CarePlanApplication {
     // ============================================================
 
     /**
-     * POST /api/orders — 创建订单 + 生成 care plan
+     * POST /api/orders — 创建订单，存 pending 状态，放入 Redis 队列
+     * 不再同步调用 LLM，立刻返回 "已收到"
      */
     @PostMapping("/api/orders")
     public ResponseEntity<?> createOrder(@RequestBody OrderRequest request) {
@@ -123,34 +126,22 @@ public class CarePlanApplication {
 
         order = orderRepo.save(order);
 
-        // 4. 创建 Care Plan（初始状态 pending）
+        // 4. 创建 Care Plan（status = pending）
         CarePlan carePlan = new CarePlan();
         carePlan.setOrder(order);
         carePlan.setStatus("pending");
         carePlanRepo.save(carePlan);
 
-        // 5. 调用 LLM 生成 care plan
-        String prompt = buildPrompt(request);
-        try {
-            carePlan.setStatus("processing");
-            carePlanRepo.save(carePlan);
+        // 5. 把 carePlan ID 放进 Redis 队列，等 worker 来处理
+        redisTemplate.opsForList().rightPush("careplan:queue", carePlan.getId().toString());
 
-            String carePlanText = callLLM(prompt);
-
-            carePlan.setContent(carePlanText);
-            carePlan.setStatus("completed");
-            carePlanRepo.save(carePlan);
-        } catch (Exception e) {
-            carePlan.setStatus("failed");
-            carePlanRepo.save(carePlan);
-            return ResponseEntity.status(500)
-                    .body(Map.of("error", "LLM 调用失败: " + e.getMessage()));
-        }
-
-        // 重新加载 order 以包含 carePlan
-        order.setCarePlan(carePlan);
-
-        return ResponseEntity.ok(new OrderResponse(order));
+        // 6. 立刻返回 "已收到"
+        return ResponseEntity.accepted().body(Map.of(
+                "message", "已收到，Care Plan 正在生成中",
+                "orderId", order.getId(),
+                "carePlanId", carePlan.getId(),
+                "status", "pending"
+        ));
     }
 
     /**
@@ -204,7 +195,7 @@ public class CarePlanApplication {
     }
 
     public static class ClaudeRequest {
-        public String model = "claude-haiku-4-5-20251001";
+        public String model = "claude-3-5-haiku-20241022";
         @JsonProperty("max_tokens")
         public int maxTokens = 2000;
         public List<ClaudeMessage> messages;

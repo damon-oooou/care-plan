@@ -385,12 +385,19 @@ form.addEventListener('submit', async (e) => {
         }
 
         // 显示结果
-        lastCarePlan = data.carePlan;
+        if (data.carePlan) {
+            // 同步模式（有 care plan 内容）
+            lastCarePlan = data.carePlan;
+            carePlanContent.textContent = data.carePlan;
+            resultMeta.textContent = 'Order #' + data.id + ' · ' + new Date(data.createdAt).toLocaleString();
+        } else {
+            // 异步模式（只收到确认）
+            lastCarePlan = '';
+            carePlanContent.textContent = '✅ ' + data.message + '\n\nOrder ID: ' + data.orderId + '\nCare Plan ID: ' + data.carePlanId + '\n\n稍后可通过 GET /api/orders/' + data.orderId + ' 查看结果。';
+            resultMeta.textContent = 'Status: ' + data.status;
+        }
         lastPatientName = payload.patientFirstName + ' ' + payload.patientLastName;
-        carePlanContent.textContent = data.carePlan;
-        resultMeta.textContent = 'Order #' + data.id + ' · ' + new Date(data.createdAt).toLocaleString();
         resultDiv.style.display = 'block';
-        resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     } catch (err) {
         errorMsg.textContent = err.message;
