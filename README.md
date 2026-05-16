@@ -122,6 +122,7 @@ mvn spring-boot:run
 | POST | /api/orders | 创建订单，存 pending，推入 Redis 队列，立刻返回 |
 | GET  | /api/orders | 查看所有订单（按时间倒序） |
 | GET  | /api/orders/{id} | 查看单个订单及 Care Plan |
+| GET  | /api/careplan/{id}/status | 轮询用：返回 status 和 content |
 | GET  | /api/patients | 查看所有患者 |
 | GET  | /api/providers | 查看所有 Provider |
 
@@ -139,7 +140,7 @@ mvn spring-boot:run
 ## 版本历史
 
 ## 版本历史
-
+- **v5** — 前端 Polling：每 3 秒轮询状态 API，自动显示 care plan
 - **v4** — Worker 消费 Redis 队列，调用 LLM，写回数据库，失败重试（最多 3 次，指数退避）
 - **v3** — 异步架构：Redis 队列，提交后立刻返回
 - **v2** — PostgreSQL + JPA，Care Plan 状态跟踪
