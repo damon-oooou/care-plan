@@ -20,17 +20,26 @@ care-plan/
 │   ├── 01_schema.sql                              # 建表语句（4 张表）
 │   └── 02_mock_data.sql                           # Mock 数据
 ├── src/main/java/com/careplan/
-│   ├── CarePlanApplication.java                   # 主程序 + REST API
-│   ├── entity/                                    # JPA 实体
+│   ├── CarePlanApplication.java                   # 启动入口（只有 main 方法）
+│   ├── controller/
+│   │   └── OrderController.java                   # REST API 接口
+│   ├── service/
+│   │   └── OrderService.java                      # 业务逻辑
+│   ├── dto/
+│   │   ├── OrderRequest.java                      # 请求格式 + 输入校验
+│   │   └── OrderResponse.java                     # 响应格式
+│   ├── entity/                                    # JPA 实体（对应数据库表）
 │   │   ├── Patient.java
 │   │   ├── Provider.java
 │   │   ├── CareOrder.java
 │   │   └── CarePlan.java
-│   └── repository/                                # JPA Repository
-│       ├── PatientRepository.java
-│       ├── ProviderRepository.java
-│       ├── CareOrderRepository.java
-│       └── CarePlanRepository.java
+│   ├── repository/                                # JPA Repository（数据库查询）
+│   │   ├── PatientRepository.java
+│   │   ├── ProviderRepository.java
+│   │   ├── CareOrderRepository.java
+│   │   └── CarePlanRepository.java
+│   └── worker/
+│       └── CarePlanWorker.java                    # 后台 Worker（Redis → LLM → DB）
 ├── src/main/resources/
 │   ├── application.properties
 │   └── static/
@@ -38,7 +47,7 @@ care-plan/
 ├── docs/
 │   └── care-plan-design-doc.md
 ├── .env                                           # 环境变量（不上传 GitHub）
-├── .env.example                                   # 环境变量模板
+├── .env.example
 ├── .gitignore
 ├── pom.xml
 └── README.md
@@ -140,6 +149,7 @@ mvn spring-boot:run
 ## 版本历史
 
 ## 版本历史
+- **v6** — 分层架构重构：Controller / Service / DTO 分离
 - **v5** — 前端 Polling：每 3 秒轮询状态 API，自动显示 care plan
 - **v4** — Worker 消费 Redis 队列，调用 LLM，写回数据库，失败重试（最多 3 次，指数退避）
 - **v3** — 异步架构：Redis 队列，提交后立刻返回
