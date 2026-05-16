@@ -341,11 +341,18 @@ const downloadBtn = document.getElementById('downloadBtn');
 
 let lastCarePlan = '';
 let lastPatientName = '';
+let pollingTimer = null;  // 轮询定时器
 
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
     errorMsg.style.display = 'none';
     resultDiv.style.display = 'none';
+
+    // 停掉之前的轮询（如果有的话）
+    if (pollingTimer) {
+        clearInterval(pollingTimer);
+        pollingTimer = null;
+    }
 
     // 收集表单数据
     const fd = new FormData(form);
@@ -366,9 +373,11 @@ form.addEventListener('submit', async (e) => {
         patientRecords: fd.get('patientRecords') || ''
     };
 
+    lastPatientName = payload.patientFirstName + ' ' + payload.patientLastName;
+
     // 显示 loading
     submitBtn.disabled = true;
-    btnText.textContent = 'Generating...';
+    btnText.textContent = 'Submitting...';
     spinner.style.display = 'block';
 
     try {
@@ -384,33 +393,97 @@ form.addEventListener('submit', async (e) => {
             throw new Error(data.error || 'Something went wrong');
         }
 
-        // 显示结果
-        if (data.carePlan) {
-            // 同步模式（有 care plan 内容）
-            lastCarePlan = data.carePlan;
-            carePlanContent.textContent = data.carePlan;
-            resultMeta.textContent = 'Order #' + data.id + ' · ' + new Date(data.createdAt).toLocaleString();
-        } else {
-            // 异步模式（只收到确认）
-            lastCarePlan = '';
-            carePlanContent.textContent = '✅ ' + data.message + '\n\nOrder ID: ' + data.orderId + '\nCare Plan ID: ' + data.carePlanId + '\n\n稍后可通过 GET /api/orders/' + data.orderId + ' 查看结果。';
-            resultMeta.textContent = 'Status: ' + data.status;
-        }
-        lastPatientName = payload.patientFirstName + ' ' + payload.patientLastName;
+        // 显示 "已收到，正在生成中..."
+        carePlanContent.textContent = '⏳ Care Plan 正在生成中，请稍候...';
+        resultMeta.textContent = 'Order #' + data.orderId + ' · Status: pending';
         resultDiv.style.display = 'block';
+        resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // 开始轮询
+        btnText.textContent = 'Generating...';
+        startPolling(data.carePlanId, data.orderId);
 
     } catch (err) {
         errorMsg.textContent = err.message;
         errorMsg.style.display = 'block';
-    } finally {
         submitBtn.disabled = false;
         btnText.textContent = 'Generate Care Plan';
         spinner.style.display = 'none';
     }
 });
 
+/**
+ * 每 3 秒调一次 GET /api/careplan/{id}/status
+ * completed → 显示 care plan，停止轮询
+ * failed → 显示错误，停止轮询
+ * pending/processing → 继续轮询
+ */
+function startPolling(carePlanId, orderId) {
+    let pollCount = 0;
+
+    pollingTimer = setInterval(async () => {
+        pollCount++;
+        try {
+            const res = await fetch('/api/careplan/' + carePlanId + '/status');
+            const data = await res.json();
+
+            // 更新状态显示
+            resultMeta.textContent = 'Order #' + orderId + ' · Status: ' + data.status + ' · Poll #' + pollCount;
+
+            if (data.status === 'completed') {
+                // 成功！停止轮询，显示 care plan
+                clearInterval(pollingTimer);
+                pollingTimer = null;
+
+                lastCarePlan = data.content;
+                carePlanContent.textContent = data.content;
+                resultMeta.textContent = 'Order #' + orderId + ' · Completed';
+
+                // 恢复按钮
+                submitBtn.disabled = false;
+                btnText.textContent = 'Generate Care Plan';
+                spinner.style.display = 'none';
+
+            } else if (data.status === 'failed') {
+                // 失败！停止轮询，显示错误
+                clearInterval(pollingTimer);
+                pollingTimer = null;
+
+                carePlanContent.textContent = '❌ Care Plan 生成失败，请重试。';
+                resultMeta.textContent = 'Order #' + orderId + ' · Failed';
+
+                // 恢复按钮
+                submitBtn.disabled = false;
+                btnText.textContent = 'Generate Care Plan';
+                spinner.style.display = 'none';
+
+            } else {
+                // pending 或 processing，继续等
+                const dots = '.'.repeat((pollCount % 3) + 1);
+                carePlanContent.textContent = '⏳ Care Plan 正在生成中' + dots;
+            }
+
+        } catch (err) {
+            // 网络错误，继续重试
+            console.error('Polling error:', err);
+        }
+
+        // 安全上限：轮询超过 60 次（3分钟）就停
+        if (pollCount >= 60) {
+            clearInterval(pollingTimer);
+            pollingTimer = null;
+            carePlanContent.textContent = '⏰ 等待超时，请手动刷新查看结果。';
+            submitBtn.disabled = false;
+            btnText.textContent = 'Generate Care Plan';
+            spinner.style.display = 'none';
+        }
+
+    }, 3000);  // 每 3 秒轮询一次
+}
+
 // 下载 care plan 为 txt 文件
 downloadBtn.addEventListener('click', () => {
+    if (!lastCarePlan) return;
     const blob = new Blob([lastCarePlan], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

@@ -180,6 +180,21 @@ public class CarePlanApplication {
         return providerRepo.findAll();
     }
 
+    /**
+     * GET /api/careplan/{id}/status — 轮询用：查看 care plan 状态和内容
+     * 前端每隔 3 秒调一次，直到 completed 或 failed
+     */
+    @GetMapping("/api/careplan/{id}/status")
+    public ResponseEntity<?> getCarePlanStatus(@PathVariable Long id) {
+        return carePlanRepo.findById(id)
+                .map(carePlan -> ResponseEntity.ok(Map.of(
+                        "carePlanId", carePlan.getId(),
+                        "status", carePlan.getStatus(),
+                        "content", carePlan.getContent() != null ? carePlan.getContent() : ""
+                )))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
     // ============================================================
     // LLM 调用
     // ============================================================
