@@ -31,7 +31,7 @@ public class OrderController {
 
         return ResponseEntity.accepted().body(Map.of(
                 "success", true,
-                "message", "已收到，Care Plan 正在生成中",
+                "message", "Received, Care Plan is being generated",
                 "orderId", result.get("orderId"),
                 "carePlanId", result.get("carePlanId"),
                 "status", "pending"

@@ -41,9 +41,9 @@ public class OrderService {
         if (existingProvider.isPresent()
                 && !existingProvider.get().getName().equalsIgnoreCase(request.referringProvider)) {
             throw new BlockError("npi_conflict",
-                    "NPI " + request.referringProviderNpi + " 已属于 "
-                    + existingProvider.get().getName() + "，不能用于 " + request.referringProvider,
-                    "NPI 是国家执照号，全国唯一，一个 NPI 只能对应一个 Provider");
+                    "NPI " + request.referringProviderNpi + " already belongs to "
+                    + existingProvider.get().getName() + ", cannot be used for " + request.referringProvider,
+                    "NPI is a national license number, one NPI can only belong to one provider");
         }
 
         // ============================================================
@@ -64,19 +64,19 @@ public class OrderService {
                     || (patient.getDateOfBirth() != null && patient.getDateOfBirth().equals(dob));
 
             if (!nameMatch || !dobMatch) {
-                warnings.add("MRN " + request.mrn + " 已存在，属于 "
+                warnings.add("MRN " + request.mrn + " already exists, belongs to "
                         + patient.getFirstName() + " " + patient.getLastName()
                         + " (DOB: " + patient.getDateOfBirth() + ")"
-                        + "，但你输入的是 " + request.patientFirstName + " " + request.patientLastName
-                        + " (DOB: " + dob + ")。可能是录入错误。");
+                        + ", but you entered  " + request.patientFirstName + " " + request.patientLastName
+                        + " (DOB: " + dob + "). Possible data entry error.");
             }
         } else if (dob != null) {
             List<Patient> sameName = patientRepo.findByFirstNameAndLastNameAndDateOfBirth(
                     request.patientFirstName, request.patientLastName, dob);
             if (!sameName.isEmpty()) {
-                warnings.add("患者 " + request.patientFirstName + " " + request.patientLastName
-                        + " (DOB: " + dob + ") 已存在，MRN 为 " + sameName.get(0).getMrn()
-                        + "，但你输入的 MRN 是 " + request.mrn + "。可能是同一人。");
+                warnings.add("Patient " + request.patientFirstName + " " + request.patientLastName
+                        + " (DOB: " + dob + ") already exists, MRN is " + sameName.get(0).getMrn()
+                        + ", but you entered MRN " + request.mrn + ". This might be the same patient.");
             }
         }
 
@@ -93,8 +93,8 @@ public class OrderService {
                     patientId, request.medicationName, todayStart, todayEnd);
             if (!sameDayOrders.isEmpty()) {
                 throw new BlockError("duplicate_order",
-                        "患者今天已经有一个 " + request.medicationName + " 的订单",
-                        "同一患者 + 同一药物 + 同一天，确定是重复提交");
+                        "Patient has already placed an order for " + request.medicationName + " today",
+                        "Same patient + same medication + same day, confirmed as duplicate submission");
             }
 
             // 同患者 + 同药物 + 不同天 → 警告
@@ -102,8 +102,8 @@ public class OrderService {
                     patientId, request.medicationName);
             if (!previousOrders.isEmpty()) {
                 CareOrder lastOrder = previousOrders.get(previousOrders.size() - 1);
-                warnings.add("患者之前已有 " + request.medicationName + " 的订单"
-                        + " (创建于 " + lastOrder.getCreatedAt().toLocalDate() + ")。可能是续方。");
+                warnings.add("Patient already has a previous " + request.medicationName + " order"
+                        + " (created on " + lastOrder.getCreatedAt().toLocalDate() + "). This might be a refill.");
             }
         }
 
@@ -112,7 +112,7 @@ public class OrderService {
         // ============================================================
         if (!warnings.isEmpty() && !request.confirmWarnings) {
             throw new WarningException("needs_confirmation",
-                    "检测到以下问题，请确认后继续", warnings);
+                    "The following issues were detected, please confirm to proceed", warnings);
         }
 
         // ============================================================

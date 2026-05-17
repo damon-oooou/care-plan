@@ -32,11 +32,19 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    // Logger 可以用来记录异常日志，方便排查问题
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     /**
      * 处理我们自定义的 BaseAppException（ValidationError, BlockError, WarningException）
      */
     @ExceptionHandler(BaseAppException.class)
     public ResponseEntity<Map<String, Object>> handleAppException(BaseAppException ex) {
+        if (ex instanceof WarningException) {
+            log.warn("[{}] {}", ex.getCode(), ex.getMessage());
+        } else {
+            log.error("[{}] {}", ex.getCode(), ex.getMessage());
+        }        
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("type", ex.getType());
         error.put("code", ex.getCode());
@@ -65,6 +73,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationException(MethodArgumentNotValidException ex) {
+        log.error("[invalid_input] Input validation failed: {}", ex.getBindingResult().getFieldErrors());
         List<String> fieldErrors = ex.getBindingResult().getFieldErrors().stream()
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .toList();
@@ -72,7 +81,7 @@ public class GlobalExceptionHandler {
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("type", "validation_error");
         error.put("code", "invalid_input");
-        error.put("message", "输入校验失败");
+        error.put("message", "Input validation failed");
         error.put("detail", fieldErrors);
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -88,10 +97,11 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleUnexpected(Exception ex) {
+        log.error("[unexpected] Internal server error: {}", ex.getMessage(), ex);
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("type", "internal_error");
         error.put("code", "unexpected");
-        error.put("message", "服务器内部错误");
+        error.put("message", "Internal server error");
         error.put("detail", ex.getMessage());
 
         Map<String, Object> body = new LinkedHashMap<>();

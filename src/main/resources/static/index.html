@@ -394,7 +394,7 @@ form.addEventListener('submit', async (e) => {
         }
 
         // 显示 "已收到，正在生成中..."
-        carePlanContent.textContent = '⏳ Care Plan 正在生成中，请稍候...';
+        carePlanContent.textContent = '⏳ Generating Care Plan, please wait...';
         resultMeta.textContent = 'Order #' + data.orderId + ' · Status: pending';
         resultDiv.style.display = 'block';
         resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -449,7 +449,7 @@ function startPolling(carePlanId, orderId) {
                 clearInterval(pollingTimer);
                 pollingTimer = null;
 
-                carePlanContent.textContent = '❌ Care Plan 生成失败，请重试。';
+                carePlanContent.textContent = '❌ Care Plan generation failed. Please try again.';
                 resultMeta.textContent = 'Order #' + orderId + ' · Failed';
 
                 // 恢复按钮
@@ -460,7 +460,7 @@ function startPolling(carePlanId, orderId) {
             } else {
                 // pending 或 processing，继续等
                 const dots = '.'.repeat((pollCount % 3) + 1);
-                carePlanContent.textContent = '⏳ Care Plan 正在生成中' + dots;
+                carePlanContent.textContent = '⏳ Care Plan is being generated' + dots;
             }
 
         } catch (err) {
@@ -472,7 +472,7 @@ function startPolling(carePlanId, orderId) {
         if (pollCount >= 60) {
             clearInterval(pollingTimer);
             pollingTimer = null;
-            carePlanContent.textContent = '⏰ 等待超时，请手动刷新查看结果。';
+            carePlanContent.textContent = '⏰ Timeout waiting for Care Plan. Please refresh manually to check the result.';
             submitBtn.disabled = false;
             btnText.textContent = 'Generate Care Plan';
             spinner.style.display = 'none';

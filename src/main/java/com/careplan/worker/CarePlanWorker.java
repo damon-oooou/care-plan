@@ -14,24 +14,21 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Worker：后台线程，不断从 Redis 队列取任务，调 LLM，写回数据库。
+ * Worker: background thread that pulls tasks from Redis queue, calls LLM, writes back to database.
  *
- * 重试策略：最多 3 次，指数退避（2秒 → 4秒 → 8秒）
- *
- * 流程：
- *   1. BLPOP 从 Redis 队列 "careplan:queue" 取一个 carePlanId
- *   2. 从数据库读 CarePlan + 关联的 Order
- *   3. 组装 prompt → 调用 Claude API
- *   4. 成功 → status = completed，写入 content
- *      失败 → 重试最多 3 次，全部失败 → status = failed
- *   5. 回到第 1 步
+ * Retry policy: max 3 attempts, exponential backoff (2s -> 4s -> 8s)
  */
 @Component
 public class CarePlanWorker implements CommandLineRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(CarePlanWorker.class);
 
     @Autowired private CarePlanRepository carePlanRepo;
     @Autowired private CareOrderRepository orderRepo;
@@ -49,10 +46,7 @@ public class CarePlanWorker implements CommandLineRunner {
         Thread workerThread = new Thread(this::processQueue, "careplan-worker");
         workerThread.setDaemon(true);
         workerThread.start();
-        System.out.println("========================================");
-        System.out.println("CarePlan Worker 已启动，等待队列任务...");
-        System.out.println("重试策略: 最多 " + MAX_RETRIES + " 次，指数退避");
-        System.out.println("========================================");
+        log.info("CarePlan Worker started, waiting for queue tasks... Retry policy: max {} attempts, exponential backoff", MAX_RETRIES);
     }
 
     // ============================================================
@@ -69,12 +63,12 @@ public class CarePlanWorker implements CommandLineRunner {
                 }
 
                 Long carePlanId = Long.parseLong(carePlanIdStr);
-                System.out.println("\n[Worker] ========== 收到任务: carePlanId = " + carePlanId + " ==========");
+                log.info("Received task: carePlanId = {}", carePlanId);
 
                 processWithRetry(carePlanId);
 
             } catch (Exception e) {
-                System.err.println("[Worker] 循环异常: " + e.getMessage());
+                log.error("Queue loop error: {}", e.getMessage());
                 try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
             }
         }
@@ -85,21 +79,22 @@ public class CarePlanWorker implements CommandLineRunner {
     // ============================================================
 
     private void processWithRetry(Long carePlanId) {
-        // 1. 从数据库读 CarePlan
+        // 1. Read CarePlan from database
         CarePlan carePlan = carePlanRepo.findById(carePlanId).orElse(null);
         if (carePlan == null) {
-            System.err.println("[Worker] CarePlan 不存在: " + carePlanId);
+            log.error("CarePlan not found: {}", carePlanId);
             return;
         }
 
-        // 2. 改状态为 processing
+        // 2. Update status to processing
         carePlan.setStatus("processing");
         carePlanRepo.save(carePlan);
+        log.info("Status updated to processing, carePlanId = {}", carePlanId);
 
-        // 3. 从数据库直接查 Order（避免 lazy loading 问题）
+        // 3. Load Order from database (avoid lazy loading issue)
         CareOrder order = orderRepo.findById(carePlan.getOrder().getId()).orElse(null);
         if (order == null) {
-            System.err.println("[Worker] Order 不存在: " + carePlan.getOrder().getId());
+            log.error("Order not found: {}", carePlan.getOrder().getId());
             carePlan.setStatus("failed");
             carePlanRepo.save(carePlan);
             return;
@@ -107,33 +102,31 @@ public class CarePlanWorker implements CommandLineRunner {
 
         String prompt = buildPromptFromOrder(order);
 
-        // 4. 重试循环
+        // 4. Retry loop
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                System.out.println("[Worker] 第 " + attempt + "/" + MAX_RETRIES + " 次尝试，正在调用 LLM...");
+                log.info("Attempt {}/{}, calling LLM...", attempt, MAX_RETRIES);
 
                 String carePlanText = callLLM(prompt);
 
-                // 成功！写回数据库
+                // Success! Write back to database
                 carePlan.setContent(carePlanText);
                 carePlan.setStatus("completed");
                 carePlanRepo.save(carePlan);
-                System.out.println("[Worker] ✅ 完成! carePlanId = " + carePlanId + "（第 " + attempt + " 次尝试成功）");
-                return;  // 成功了，直接返回
+                log.info("Done! carePlanId = {} (succeeded on attempt {})", carePlanId, attempt);
+                return;
 
             } catch (Exception e) {
-                System.err.println("[Worker] ❌ 第 " + attempt + "/" + MAX_RETRIES + " 次失败: " + e.getMessage());
+                log.error("Attempt {}/{} failed: {}", attempt, MAX_RETRIES, e.getMessage());
 
                 if (attempt < MAX_RETRIES) {
-                    // 指数退避：2秒 → 4秒 → 8秒
                     long delay = BASE_DELAY_MS * (long) Math.pow(2, attempt - 1);
-                    System.out.println("[Worker] ⏳ 等待 " + (delay / 1000) + " 秒后重试...");
+                    log.info("Waiting {} seconds before retry...", delay / 1000);
                     try { Thread.sleep(delay); } catch (InterruptedException ignored) {}
                 } else {
-                    // 全部重试都失败了
                     carePlan.setStatus("failed");
                     carePlanRepo.save(carePlan);
-                    System.err.println("[Worker] 💀 全部 " + MAX_RETRIES + " 次重试均失败! carePlanId = " + carePlanId);
+                    log.error("All {} attempts failed! carePlanId = {}", MAX_RETRIES, carePlanId);
                 }
             }
         }
