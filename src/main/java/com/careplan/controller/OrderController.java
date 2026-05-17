@@ -21,13 +21,16 @@ public class OrderController {
     @Autowired private OrderService orderService;
 
     /**
-     * POST /api/orders — 创建订单，立刻返回
+     * POST /api/orders — 创建订单（含重复检测）
+     * Service 里 throw 异常，GlobalExceptionHandler 统一处理
+     * Controller 只管正常情况
      */
     @PostMapping("/api/orders")
     public ResponseEntity<?> createOrder(@RequestBody OrderRequest request) {
-        Map<String, Long> result = orderService.createOrder(request);
+        Map<String, Object> result = orderService.createOrder(request);
 
         return ResponseEntity.accepted().body(Map.of(
+                "success", true,
                 "message", "已收到，Care Plan 正在生成中",
                 "orderId", result.get("orderId"),
                 "carePlanId", result.get("carePlanId"),
