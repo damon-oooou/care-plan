@@ -6,7 +6,6 @@ import com.careplan.exception.*;
 import com.careplan.repository.*;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -23,7 +22,7 @@ public class OrderService {
     @Autowired private ProviderRepository providerRepo;
     @Autowired private CareOrderRepository orderRepo;
     @Autowired private CarePlanRepository carePlanRepo;
-    @Autowired private StringRedisTemplate redisTemplate;
+    @Autowired private RedisQueueService redisQueue;
 
     /**
      * 创建订单（含重复检测）
@@ -161,7 +160,7 @@ public class OrderService {
         carePlan.setStatus("pending");
         carePlanRepo.save(carePlan);
 
-        redisTemplate.opsForList().rightPush("careplan:queue", carePlan.getId().toString());
+        redisQueue.pushToQueue(carePlan.getId().toString());
 
         return Map.of(
                 "orderId", order.getId(),

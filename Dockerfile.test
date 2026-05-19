@@ -1,0 +1,19 @@
+# Dockerfile for running tests
+FROM eclipse-temurin:17-jdk-alpine
+
+WORKDIR /app
+
+# Copy Maven wrapper and pom.xml first (for dependency caching)
+COPY pom.xml .
+COPY .mvn .mvn
+COPY mvnw .
+RUN chmod +x mvnw
+
+# Download dependencies (cached if pom.xml doesn't change)
+RUN ./mvnw dependency:resolve dependency:resolve-plugins -q || true
+
+# Copy source code
+COPY src ./src
+
+# Run tests
+CMD ["./mvnw", "test", "-e"]
