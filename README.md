@@ -1,95 +1,160 @@
 # Care Plan Generator
 
-专科药房 Care Plan 自动生成系统。医疗助理填写患者信息，系统调用 LLM 自动生成 Care Plan。
+Specialty pharmacy Care Plan auto-generation system. Medical assistants enter patient information, the system calls an LLM to automatically generate a Care Plan.
 
-## 技术栈
+## Tech Stack
 
-- Java 17 + Spring Boot 3.3
+- Java 17 + Spring Boot 3.4
 - Spring Data JPA + PostgreSQL
-- Redis（消息队列）
-- Docker Compose（Redis 容器）
+- Redis (message queue)
+- Docker Compose (Redis container)
 - Anthropic Claude API (claude-haiku-4-5-20251001)
-- 前端：原生 HTML/CSS/JS
+- Frontend: vanilla HTML/CSS/JS
+- Testing: JUnit 5 + Mockito + H2
 
-## 项目结构
+## Project Structure
 
 ```
 care-plan/
-├── docker-compose.yml                             # Redis 容器
+├── .github/workflows/
+│   └── ci.yml                                     # GitHub Actions CI
+├── docker-compose.yml                             # Redis container
 ├── sql/
-│   ├── 01_schema.sql                              # 建表语句（4 张表）
-│   └── 02_mock_data.sql                           # Mock 数据
+│   ├── 01_schema.sql                              # Table creation (4 tables)
+│   └── 02_mock_data.sql                           # Mock data
 ├── src/main/java/com/careplan/
-│   ├── CarePlanApplication.java                   # 启动入口（只有 main 方法）
+│   ├── CarePlanApplication.java                   # Entry point (main method only)
 │   ├── controller/
-│   │   └── OrderController.java                   # REST API 接口
+│   │   └── OrderController.java                   # REST API endpoints
 │   ├── service/
-│   │   └── OrderService.java                      # 业务逻辑
+│   │   ├── OrderService.java                      # Business logic
+│   │   └── RedisQueueService.java                 # Redis queue wrapper
 │   ├── dto/
-│   │   ├── OrderRequest.java                      # 请求格式 + 输入校验
-│   │   └── OrderResponse.java                     # 响应格式
-│   ├── entity/                                    # JPA 实体（对应数据库表）
+│   │   ├── OrderRequest.java                      # Request format + input validation
+│   │   └── OrderResponse.java                     # Response format
+│   ├── entity/                                    # JPA entities (database tables)
 │   │   ├── Patient.java
 │   │   ├── Provider.java
 │   │   ├── CareOrder.java
 │   │   └── CarePlan.java
-│   ├── repository/                                # JPA Repository（数据库查询）
+│   ├── repository/                                # JPA Repository (database queries)
 │   │   ├── PatientRepository.java
 │   │   ├── ProviderRepository.java
 │   │   ├── CareOrderRepository.java
 │   │   └── CarePlanRepository.java
+│   ├── exception/                                 # Unified error handling
+│   │   ├── BaseAppException.java                  # Base exception class
+│   │   ├── ValidationError.java                   # 400 - input format errors
+│   │   ├── BlockError.java                        # 409 - business rule blocks
+│   │   ├── WarningException.java                  # 200 - warnings (user can confirm)
+│   │   └── GlobalExceptionHandler.java            # Catches all exceptions, unified JSON
 │   └── worker/
-│       └── CarePlanWorker.java                    # 后台 Worker（Redis → LLM → DB）
+│       └── CarePlanWorker.java                    # Background worker (Redis → LLM → DB)
 ├── src/main/resources/
-│   ├── application.properties
+│   ├── application.properties                     # App config (PostgreSQL, Redis, logging)
 │   └── static/
-│       └── index.html                             # 前端页面
+│       └── index.html                             # Frontend page
+├── src/test/java/com/careplan/
+│   ├── service/
+│   │   └── OrderServiceTest.java                  # Unit tests (17 tests, Mockito)
+│   └── controller/
+│       └── OrderControllerIntegrationTest.java    # Integration tests (10 tests, H2)
+├── src/test/resources/
+│   └── application.properties                     # Test config (H2 in-memory DB)
 ├── docs/
 │   └── care-plan-design-doc.md
-├── .env                                           # 环境变量（不上传 GitHub）
+├── .env                                           # Environment variables (not in Git)
 ├── .env.example
 ├── .gitignore
 ├── pom.xml
 └── README.md
 ```
 
-## 架构
+## Architecture
 
 ```
-用户提交表单
+User submits form
     ↓
 POST /api/orders
     ↓
-存数据库（CarePlan status = pending）
+Duplicate detection (Provider NPI, Patient MRN, Order)
+    ├─ Block (409) → NPI conflict, same-day duplicate order
+    ├─ Warning (200) → MRN mismatch, possible refill
+    └─ Pass
+        ↓
+Save to database (CarePlan status = pending)
     ↓
-推入 Redis 队列（careplan:queue）
+Push to Redis queue (careplan:queue)
     ↓
-立刻返回 202 "已收到"
+Return 202 "Received" immediately
     ↓
-（TODO: Worker 从队列取任务 → 调用 LLM → 更新数据库 status = completed）
+CarePlanWorker (background thread)
+    ↓
+BLPOP from Redis → Call Claude API → Save result to DB
+    ├─ Success → status = completed
+    └─ Failure → Retry (max 3, exponential backoff 2s → 4s → 8s)
+        └─ All retries failed → status = failed
+    ↓
+Frontend polls GET /api/careplan/{id}/status every 3 seconds
+    ↓
+completed → Display care plan
+failed    → Display error
 ```
 
-## 数据库设计
+## Database Design
 
-4 张表：
+4 tables:
 
-- **patient** — 患者（first_name, last_name, mrn, date_of_birth）
-- **provider** — 处方医生（name, npi）
-- **care_order** — 订单（关联 patient + provider，含诊断、用药信息）
-- **care_plan** — LLM 生成的 Care Plan（关联 order，含 status 状态跟踪）
+- **patient** — first_name, last_name, mrn (unique), date_of_birth
+- **provider** — name, npi (unique)
+- **care_order** — links patient + provider, contains diagnosis and medication info
+- **care_plan** — LLM-generated content, linked to order, with status tracking
 
-Care Plan 状态流转：`pending → processing → completed / failed`
+Care Plan status flow: `pending → processing → completed / failed`
 
-## 快速启动
+## Duplicate Detection
 
-### 1. 前提条件
+| Scenario | Result | HTTP |
+|----------|--------|------|
+| NPI exists + same name | Reuse provider | — |
+| NPI exists + different name | Block | 409 |
+| MRN exists + same name + same DOB | Reuse patient | — |
+| MRN exists + name or DOB mismatch | Warning | 200 |
+| Same name + DOB, different MRN | Warning | 200 |
+| Same patient + same medication + same day | Block | 409 |
+| Same patient + same medication + different day | Warning | 200 |
 
-- Java 17+
+Warnings can be skipped by sending `confirmWarnings: true`.
+
+## Error Handling
+
+All errors return a unified JSON format:
+
+```json
+{
+  "success": false,
+  "error": {
+    "type": "block",
+    "code": "npi_conflict",
+    "message": "NPI 1234567890 already belongs to Dr. Chen",
+    "detail": "NPI is a national license number, one NPI can only belong to one provider"
+  },
+  "timestamp": "2026-05-19T10:30:00"
+}
+```
+
+Three exception types: `ValidationError` (400), `BlockError` (409), `WarningException` (200 with warnings). All handled by `GlobalExceptionHandler`.
+
+## Quick Start
+
+### 1. Prerequisites
+
+- Java 17
 - Maven 3.8+
 - PostgreSQL 16+
 - Docker Desktop
 
-### 2. 创建数据库并导入数据
+### 2. Create database and import data
 
 ```bash
 psql -U postgres -c "CREATE DATABASE careplan;"
@@ -97,9 +162,9 @@ psql -U postgres -d careplan -f sql/01_schema.sql
 psql -U postgres -d careplan -f sql/02_mock_data.sql
 ```
 
-### 3. 配置环境变量
+### 3. Configure environment variables
 
-复制 `.env.example` 为 `.env`，填入真实值：
+Copy `.env.example` to `.env` and fill in real values:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-your-key-here
@@ -110,48 +175,112 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 ```
 
-### 4. 启动 Redis
+### 4. Start Redis
 
 ```bash
 docker-compose up -d
 ```
 
-### 5. 启动应用
+### 5. Start the application
 
 ```bash
 mvn spring-boot:run
 ```
 
-打开 http://localhost:8080
+Open http://localhost:8080
+
+### 6. Run tests
+
+```bash
+mvn clean test
+```
+
+27 tests (17 unit + 10 integration), uses H2 in-memory database, no PostgreSQL or Redis needed.
 
 ## API
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | /api/orders | 创建订单，存 pending，推入 Redis 队列，立刻返回 |
-| GET  | /api/orders | 查看所有订单（按时间倒序） |
-| GET  | /api/orders/{id} | 查看单个订单及 Care Plan |
-| GET  | /api/careplan/{id}/status | 轮询用：返回 status 和 content |
-| GET  | /api/patients | 查看所有患者 |
-| GET  | /api/providers | 查看所有 Provider |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /api/orders | Create order with duplicate detection, push to Redis queue |
+| GET  | /api/orders | List all orders (newest first) |
+| GET  | /api/orders/{id} | Get single order with care plan |
+| GET  | /api/careplan/{id}/status | Polling: returns status and content |
+| GET  | /api/patients | List all patients |
+| GET  | /api/providers | List all providers |
 
-### POST /api/orders 返回示例
+### POST /api/orders response examples
 
+Success (202):
 ```json
 {
-  "message": "已收到，Care Plan 正在生成中",
+  "success": true,
+  "message": "Received, Care Plan is being generated",
   "orderId": 17,
   "carePlanId": 13,
   "status": "pending"
 }
 ```
 
-## 版本历史
+Block (409):
+```json
+{
+  "success": false,
+  "error": {
+    "type": "block",
+    "code": "duplicate_order",
+    "message": "Patient already has a Metformin order today"
+  },
+  "timestamp": "2026-05-19T10:30:00"
+}
+```
 
-## 版本历史
-- **v6** — 分层架构重构：Controller / Service / DTO 分离
-- **v5** — 前端 Polling：每 3 秒轮询状态 API，自动显示 care plan
-- **v4** — Worker 消费 Redis 队列，调用 LLM，写回数据库，失败重试（最多 3 次，指数退避）
-- **v3** — 异步架构：Redis 队列，提交后立刻返回
-- **v2** — PostgreSQL + JPA，Care Plan 状态跟踪
-- **v1** — MVP，内存存储（HashMap），同步 LLM 调用
+Warning (200):
+```json
+{
+  "success": false,
+  "error": {
+    "type": "warning",
+    "code": "needs_confirmation",
+    "message": "Issues detected, please confirm to continue",
+    "warnings": ["MRN 123456 already exists, belongs to John Doe..."]
+  },
+  "timestamp": "2026-05-19T10:30:00"
+}
+```
+
+## CI/CD
+
+GitHub Actions runs all 27 tests on every push to `main` and on every pull request. Tests must pass before merging.
+
+Config: `.github/workflows/ci.yml`
+
+## Logging
+
+SLF4J Logger with file output. Logs written to `logs/careplan.log`.
+
+Worker logs example:
+```
+INFO  CarePlanWorker - Received task: carePlanId = 45
+INFO  CarePlanWorker - Status updated to processing, carePlanId = 45
+INFO  CarePlanWorker - Attempt 1/3, calling LLM...
+INFO  CarePlanWorker - Done! carePlanId = 45 (succeeded on attempt 1)
+```
+
+Error handling logs:
+```
+ERROR GlobalExceptionHandler - [npi_conflict] NPI 1234567890 already belongs to Dr. Chen
+WARN  GlobalExceptionHandler - [needs_confirmation] Issues detected, please confirm to continue
+```
+
+## Version History
+
+- **v10** — GitHub Actions CI: auto-run all tests on push/PR
+- **v9** — Unit tests (17) + Integration tests (10), H2 test database
+- **v8** — Unified error handling: BaseAppException, BlockError, WarningException, GlobalExceptionHandler
+- **v7** — Duplicate detection: Provider NPI, Patient MRN/DOB, Order same-day
+- **v6** — Layered architecture: Controller / Service / DTO separation
+- **v5** — Frontend polling: auto-updates when care plan is ready
+- **v4** — Worker with retry: consume Redis queue, call LLM, exponential backoff
+- **v3** — Async architecture: Redis queue, instant response
+- **v2** — PostgreSQL + JPA, Care Plan status tracking
+- **v1** — MVP: in-memory HashMap, synchronous LLM call
