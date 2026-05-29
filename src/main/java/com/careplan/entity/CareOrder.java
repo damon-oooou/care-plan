@@ -37,7 +37,25 @@ public class CareOrder {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    @Column(name = "source_system", length = 50)
+    private String sourceSystem;
+
+    @Column(name = "external_order_id", length = 100)
+    private String externalOrderId;
+
+    @Column(name = "raw_data", columnDefinition = "TEXT")
+    private String rawData;
+
     // 一对一关联 CarePlan（可以为空，生成后才有）
+    public String getSourceSystem() { return sourceSystem; }
+    public void setSourceSystem(String sourceSystem) { this.sourceSystem = sourceSystem; }
+
+    public String getExternalOrderId() { return externalOrderId; }
+    public void setExternalOrderId(String externalOrderId) { this.externalOrderId = externalOrderId; }
+
+    public String getRawData() { return rawData; }
+    public void setRawData(String rawData) { this.rawData = rawData; }
+
     @OneToOne(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.EAGER)
     private CarePlan carePlan;
 

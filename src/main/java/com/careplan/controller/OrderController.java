@@ -1,5 +1,8 @@
 package com.careplan.controller;
 
+import com.careplan.adapter.AdapterRouter;
+import com.careplan.dto.ExternalOrderRequest;
+import com.careplan.dto.InternalOrder;
 import com.careplan.dto.OrderRequest;
 import com.careplan.dto.OrderResponse;
 import com.careplan.entity.CarePlan;
@@ -19,15 +22,34 @@ import java.util.Map;
 public class OrderController {
 
     @Autowired private OrderService orderService;
+    @Autowired private AdapterRouter adapterRouter;
 
     /**
-     * POST /api/orders — 创建订单（含重复检测）
+     * POST /api/orders — 创建订单（前端表单，含重复检测）
      * Service 里 throw 异常，GlobalExceptionHandler 统一处理
      * Controller 只管正常情况
      */
     @PostMapping("/api/orders")
     public ResponseEntity<?> createOrder(@RequestBody OrderRequest request) {
         Map<String, Object> result = orderService.createOrder(request);
+
+        return ResponseEntity.accepted().body(Map.of(
+                "success", true,
+                "message", "Received, Care Plan is being generated",
+                "orderId", result.get("orderId"),
+                "carePlanId", result.get("carePlanId"),
+                "status", "pending"
+        ));
+    }
+
+    /**
+     * POST /api/orders/external — 外部数据源接入
+     * Adapter 转换 → InternalOrder → 复用业务逻辑
+     */
+    @PostMapping("/api/external-orders")
+    public ResponseEntity<?> createExternalOrder(@RequestBody ExternalOrderRequest request) {
+        InternalOrder internal = adapterRouter.route(request.sourceSystem, request.rawData);
+        Map<String, Object> result = orderService.createFromInternal(internal);
 
         return ResponseEntity.accepted().body(Map.of(
                 "success", true,

@@ -11,6 +11,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.careplan.adapter.AdapterParseException;
+import com.careplan.adapter.AdapterValidationException;
+
 /**
  * 全局异常处理器
  *
@@ -111,4 +114,37 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
+
+    @ExceptionHandler(AdapterParseException.class)
+    public ResponseEntity<Map<String, Object>> handleAdapterParse(AdapterParseException ex) {
+        log.error("[adapter_parse] {}", ex.getMessage());
+        Map<String, Object> body = Map.of(
+                "success", false,
+                "error", Map.of(
+                        "type", "validation",
+                        "code", "adapter_parse_error",
+                        "message", ex.getMessage()
+                ),
+                "timestamp", LocalDateTime.now()
+        );
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    @ExceptionHandler(AdapterValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleAdapterValidation(AdapterValidationException ex) {
+        log.warn("[adapter_validation] {}", ex.getMessage());
+        Map<String, Object> body = Map.of(
+                "success", false,
+                "error", Map.of(
+                        "type", "validation",
+                        "code", "adapter_validation_error",
+                        "message", ex.getMessage(),
+                        "details", ex.getErrors()
+                ),
+                "timestamp", LocalDateTime.now()
+        );
+        return ResponseEntity.badRequest().body(body);
+    }
+
+
 }
