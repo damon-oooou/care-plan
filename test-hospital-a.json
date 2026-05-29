@@ -1,4 +1,0 @@
-{
-  "sourceSystem": "hospital_a",
-  "rawData": "{\"order_number\":\"HA-2026-00451\",\"ordering_physician\":{\"first_name\":\"Michael\",\"last_name\":\"Chen\",\"national_provider_id\":\"2333344444\"},\"patient_demographics\":{\"given_name\":\"Emily\",\"family_name\":\"Wang\",\"medical_record_number\":\"445566\",\"date_of_birth\":\"1992-11-03\",\"clinical_summary\":\"Asthma since childhood\"},\"prescription\":{\"drug\":\"Montelukast\",\"dose\":\"10mg\",\"route\":\"oral\",\"frequency\":\"once daily at bedtime\",\"primary_dx\":\"Asthma\",\"secondary_dx\":[\"Allergic Rhinitis\",\"GERD\"],\"prior_medications\":[\"Albuterol 90mcg\",\"Fluticasone 250mcg\"]}}"
-}

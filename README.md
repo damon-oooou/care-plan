@@ -1,6 +1,6 @@
 # Care Plan Generator
 
-Specialty pharmacy Care Plan auto-generation system. Medical assistants enter patient information, the system calls an LLM to automatically generate a Care Plan.
+Specialty pharmacy Care Plan auto-generation system. Medical assistants enter patient information, the system calls an LLM to automatically generate a Care Plan. Supports multi-source intake — hospitals and clinics with different data formats are normalized through the Adapter pattern.
 
 ## Tech Stack
 
@@ -21,16 +21,26 @@ care-plan/
 ├── docker-compose.yml                             # Redis container
 ├── sql/
 │   ├── 01_schema.sql                              # Table creation (4 tables)
-│   └── 02_mock_data.sql                           # Mock data
+│   ├── 02_mock_data.sql                           # Mock data
+│   └── 03_add_source_fields.sql                   # Add source tracking columns
 ├── src/main/java/com/careplan/
 │   ├── CarePlanApplication.java                   # Entry point (main method only)
+│   ├── adapter/                                   # Multi-source intake (Adapter pattern)
+│   │   ├── BaseIntakeAdapter.java                 # Abstract base: parse → transform → validate
+│   │   ├── AdapterRouter.java                     # Auto-routes by sourceSystem
+│   │   ├── ClinicBAdapter.java                    # Clinic B: JSON, MM/dd/yyyy, SIG abbreviations
+│   │   ├── HospitalAAdapter.java                  # Hospital A: JSON, yyyy-MM-dd, full field names
+│   │   ├── AdapterParseException.java             # Parse-stage errors
+│   │   └── AdapterValidationException.java        # Validation-stage errors
 │   ├── controller/
 │   │   └── OrderController.java                   # REST API endpoints
 │   ├── service/
 │   │   ├── OrderService.java                      # Business logic
 │   │   └── RedisQueueService.java                 # Redis queue wrapper
 │   ├── dto/
-│   │   ├── OrderRequest.java                      # Request format + input validation
+│   │   ├── InternalOrder.java                     # Unified internal format (all sources → this)
+│   │   ├── ExternalOrderRequest.java              # External intake request wrapper
+│   │   ├── OrderRequest.java                      # Frontend form request
 │   │   └── OrderResponse.java                     # Response format
 │   ├── entity/                                    # JPA entities (database tables)
 │   │   ├── Patient.java
@@ -55,6 +65,9 @@ care-plan/
 │   └── static/
 │       └── index.html                             # Frontend page
 ├── src/test/java/com/careplan/
+│   ├── adapter/
+│   │   ├── ClinicBAdapterTest.java                # Clinic B adapter tests (18 tests)
+│   │   └── HospitalAAdapterTest.java              # Hospital A adapter tests (13 tests)
 │   ├── service/
 │   │   └── OrderServiceTest.java                  # Unit tests (17 tests, Mockito)
 │   └── controller/
@@ -73,33 +86,69 @@ care-plan/
 ## Architecture
 
 ```
-User submits form
-    ↓
-POST /api/orders
-    ↓
-Duplicate detection (Provider NPI, Patient MRN, Order)
-    ├─ Block (409) → NPI conflict, same-day duplicate order
-    ├─ Warning (200) → MRN mismatch, possible refill
-    └─ Pass
-        ↓
-Save to database (CarePlan status = pending)
-    ↓
-Push to Redis queue (careplan:queue)
-    ↓
-Return 202 "Received" immediately
-    ↓
-CarePlanWorker (background thread)
-    ↓
-BLPOP from Redis → Call Claude API → Save result to DB
-    ├─ Success → status = completed
-    └─ Failure → Retry (max 3, exponential backoff 2s → 4s → 8s)
-        └─ All retries failed → status = failed
-    ↓
-Frontend polls GET /api/careplan/{id}/status every 3 seconds
-    ↓
-completed → Display care plan
-failed    → Display error
+┌─────────────────────────────────────────────────┐
+│  Two entry paths, same downstream logic          │
+└─────────────────────────────────────────────────┘
+
+Path 1: Frontend form                Path 2: External data sources
+    │                                    │
+POST /api/orders                    POST /api/external-orders
+    │                                    │
+OrderRequest                        AdapterRouter
+    │                                    │
+    │                                ClinicBAdapter / HospitalAAdapter
+    │                                    │
+    │                                parse → transform → validate
+    │                                    │
+    │                                InternalOrder
+    │                                    │
+    └──────────── OrderService ──────────┘
+                      │
+            Duplicate detection (NPI, MRN, Order)
+                ├─ Block (409)
+                ├─ Warning (200)
+                └─ Pass
+                      │
+              Save to database
+                      │
+              Push to Redis queue
+                      │
+              Return 202 immediately
+                      │
+            CarePlanWorker (background)
+                      │
+            BLPOP → Claude API → Save result
+                ├─ Success → completed
+                └─ Failure → Retry (max 3)
+                      │
+            Frontend polls GET /api/careplan/{id}/status
 ```
+
+## Multi-Source Intake
+
+Different hospitals and clinics send data in different formats. The Adapter pattern normalizes everything into `InternalOrder` before hitting business logic.
+
+### How it works
+
+1. External system sends JSON to `POST /api/external-orders` with `sourceSystem` identifier
+2. `AdapterRouter` finds the matching Adapter (auto-discovered via Spring `@Component`)
+3. Adapter runs: `parse()` → `transform()` → `validate()`
+4. Output: `InternalOrder` → reuses existing duplicate detection, DB save, Redis queue
+
+### Adding a new data source
+
+Add one file: `adapter/NewHospitalAdapter.java` with `@Component`. No other code changes needed. Spring auto-discovers it.
+
+### Current adapters
+
+| Source | Adapter | Date Format | Frequency | Field Style |
+|--------|---------|-------------|-----------|-------------|
+| Clinic B | `ClinicBAdapter` | MM/dd/yyyy | SIG abbreviations (BID → twice daily) | Short (fname, lname, sig) |
+| Hospital A | `HospitalAAdapter` | yyyy-MM-dd | Full text (once daily at bedtime) | Verbose (given_name, family_name) |
+
+### Data traceability
+
+Every external order stores: `source_system` (which source), `external_order_id` (their order number), `raw_data` (original JSON for debugging).
 
 ## Database Design
 
@@ -107,7 +156,7 @@ failed    → Display error
 
 - **patient** — first_name, last_name, mrn (unique), date_of_birth
 - **provider** — name, npi (unique)
-- **care_order** — links patient + provider, contains diagnosis and medication info
+- **care_order** — links patient + provider, contains diagnosis and medication info, plus source_system, external_order_id, raw_data for external orders
 - **care_plan** — LLM-generated content, linked to order, with status tracking
 
 Care Plan status flow: `pending → processing → completed / failed`
@@ -126,6 +175,8 @@ Care Plan status flow: `pending → processing → completed / failed`
 
 Warnings can be skipped by sending `confirmWarnings: true`.
 
+Duplicate detection works identically for both frontend orders and external orders.
+
 ## Error Handling
 
 All errors return a unified JSON format:
@@ -143,7 +194,14 @@ All errors return a unified JSON format:
 }
 ```
 
-Three exception types: `ValidationError` (400), `BlockError` (409), `WarningException` (200 with warnings). All handled by `GlobalExceptionHandler`.
+Five exception types:
+- `ValidationError` (400) — input format errors
+- `BlockError` (409) — business rule blocks
+- `WarningException` (200) — warnings, user can confirm
+- `AdapterParseException` (400) — external data parse failure
+- `AdapterValidationException` (400) — external data validation failure
+
+All handled by `GlobalExceptionHandler`.
 
 ## Quick Start
 
@@ -160,6 +218,7 @@ Three exception types: `ValidationError` (400), `BlockError` (409), `WarningExce
 psql -U postgres -c "CREATE DATABASE careplan;"
 psql -U postgres -d careplan -f sql/01_schema.sql
 psql -U postgres -d careplan -f sql/02_mock_data.sql
+psql -U postgres -d careplan -f sql/03_add_source_fields.sql
 ```
 
 ### 3. Configure environment variables
@@ -195,13 +254,14 @@ Open http://localhost:8080
 mvn clean test
 ```
 
-27 tests (17 unit + 10 integration), uses H2 in-memory database, no PostgreSQL or Redis needed.
+58 tests (17 unit + 10 integration + 31 adapter), uses H2 in-memory database, no PostgreSQL or Redis needed.
 
 ## API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | /api/orders | Create order with duplicate detection, push to Redis queue |
+| POST | /api/orders | Create order from frontend form |
+| POST | /api/external-orders | Create order from external data source (Adapter pattern) |
 | GET  | /api/orders | List all orders (newest first) |
 | GET  | /api/orders/{id} | Get single order with care plan |
 | GET  | /api/careplan/{id}/status | Polling: returns status and content |
@@ -248,9 +308,30 @@ Warning (200):
 }
 ```
 
+### POST /api/external-orders
+
+Request:
+```json
+{
+  "sourceSystem": "clinic_b",
+  "rawData": "{\"ref_no\":\"CB-001\",\"doc\":{\"full_name\":\"Dr. Sarah Lin\",\"license\":\"1234567890\"},\"pt\":{\"fname\":\"John\",\"lname\":\"Doe\",\"record_id\":\"998877\",\"born\":\"03/15/1985\"},\"rx\":{\"med\":\"Metformin\",\"strength\":\"500mg\",\"sig\":\"BID\",\"condition\":\"Type 2 Diabetes\"}}"
+}
+```
+
+Success (202):
+```json
+{
+  "success": true,
+  "message": "Received, Care Plan is being generated",
+  "orderId": 48,
+  "carePlanId": 48,
+  "status": "pending"
+}
+```
+
 ## CI/CD
 
-GitHub Actions runs all 27 tests on every push to `main` and on every pull request. Tests must pass before merging.
+GitHub Actions runs all 58 tests on every push to `main` and on every pull request. Tests must pass before merging.
 
 Config: `.github/workflows/ci.yml`
 
@@ -270,10 +351,12 @@ Error handling logs:
 ```
 ERROR GlobalExceptionHandler - [npi_conflict] NPI 1234567890 already belongs to Dr. Chen
 WARN  GlobalExceptionHandler - [needs_confirmation] Issues detected, please confirm to continue
+ERROR GlobalExceptionHandler - [adapter_parse] [clinic_b] Parse failed: Invalid JSON
 ```
 
 ## Version History
 
+- **v11** — Multi-source intake: Adapter pattern, InternalOrder, ClinicBAdapter, HospitalAAdapter, 31 adapter tests
 - **v10** — GitHub Actions CI: auto-run all tests on push/PR
 - **v9** — Unit tests (17) + Integration tests (10), H2 test database
 - **v8** — Unified error handling: BaseAppException, BlockError, WarningException, GlobalExceptionHandler
