@@ -4,20 +4,16 @@ import com.careplan.entity.CarePlan;
 import com.careplan.entity.CareOrder;
 import com.careplan.repository.CarePlanRepository;
 import com.careplan.repository.CareOrderRepository;
+import com.careplan.service.llm.BaseLLMService;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.http.*;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
-import com.fasterxml.jackson.annotation.JsonProperty;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -33,20 +29,19 @@ public class CarePlanWorker implements CommandLineRunner {
     @Autowired private CarePlanRepository carePlanRepo;
     @Autowired private CareOrderRepository orderRepo;
     @Autowired private StringRedisTemplate redisTemplate;
-
-    @Value("${anthropic.api-key}")
-    private String apiKey;
+    @Autowired private BaseLLMService llmService;  // 注入抽象，不知道底层是谁
 
     private static final String QUEUE_NAME = "careplan:queue";
     private static final int MAX_RETRIES = 3;
-    private static final long BASE_DELAY_MS = 2000;  // 2秒，指数退避基数
+    private static final long BASE_DELAY_MS = 2000;
 
     @Override
     public void run(String... args) {
         Thread workerThread = new Thread(this::processQueue, "careplan-worker");
         workerThread.setDaemon(true);
         workerThread.start();
-        log.info("CarePlan Worker started, waiting for queue tasks... Retry policy: max {} attempts, exponential backoff", MAX_RETRIES);
+        log.info("CarePlan Worker started, LLM provider: {}, waiting for queue tasks... Retry policy: max {} attempts, exponential backoff",
+                llmService.getProviderName(), MAX_RETRIES);
     }
 
     // ============================================================
@@ -105,9 +100,9 @@ public class CarePlanWorker implements CommandLineRunner {
         // 4. Retry loop
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                log.info("Attempt {}/{}, calling LLM...", attempt, MAX_RETRIES);
+                log.info("Attempt {}/{}, calling LLM ({})...", attempt, MAX_RETRIES, llmService.getProviderName());
 
-                String carePlanText = callLLM(prompt);
+                String carePlanText = llmService.generateCarePlan(prompt);
 
                 // Success! Write back to database
                 carePlan.setContent(carePlanText);
@@ -133,7 +128,7 @@ public class CarePlanWorker implements CommandLineRunner {
     }
 
     // ============================================================
-    // Prompt 组装
+    // Prompt 组装（不变）
     // ============================================================
 
     private String buildPromptFromOrder(CareOrder order) {
@@ -158,67 +153,5 @@ public class CarePlanWorker implements CommandLineRunner {
         }
 
         return sb.toString();
-    }
-
-    // ============================================================
-    // LLM 调用
-    // ============================================================
-
-    public static class ClaudeMessage {
-        public String role;
-        public String content;
-        public ClaudeMessage() {}
-        public ClaudeMessage(String role, String content) {
-            this.role = role;
-            this.content = content;
-        }
-    }
-
-    public static class ClaudeRequest {
-        public String model = "claude-haiku-4-5-20251001";
-        @JsonProperty("max_tokens")
-        public int maxTokens = 2000;
-        public List<ClaudeMessage> messages;
-        public String system;
-    }
-
-    public static class ClaudeContentBlock {
-        public String type;
-        public String text;
-    }
-
-    public static class ClaudeResponse {
-        public List<ClaudeContentBlock> content;
-    }
-
-    private String callLLM(String prompt) {
-        RestTemplate restTemplate = new RestTemplate();
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("x-api-key", apiKey);
-        headers.set("anthropic-version", "2023-06-01");
-
-        ClaudeRequest claudeRequest = new ClaudeRequest();
-        claudeRequest.system = "You are a clinical pharmacist. Generate a professional care plan based on the patient information provided. The care plan must include these 4 sections:\n1. Problem List\n2. Goals\n3. Pharmacist Interventions\n4. Monitoring Plan\n\nBe specific, clinically accurate, and concise.";
-        claudeRequest.messages = List.of(new ClaudeMessage("user", prompt));
-
-        HttpEntity<ClaudeRequest> entity = new HttpEntity<>(claudeRequest, headers);
-
-        ResponseEntity<ClaudeResponse> response = restTemplate.exchange(
-                "https://api.anthropic.com/v1/messages",
-                HttpMethod.POST,
-                entity,
-                ClaudeResponse.class
-        );
-
-        ClaudeResponse body = response.getBody();
-        if (body != null && body.content != null && !body.content.isEmpty()) {
-            return body.content.stream()
-                    .filter(block -> "text".equals(block.type))
-                    .map(block -> block.text)
-                    .reduce("", (a, b) -> a + b);
-        }
-        throw new RuntimeException("LLM 返回为空");
     }
 }

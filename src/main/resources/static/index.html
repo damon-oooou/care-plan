@@ -390,7 +390,7 @@ form.addEventListener('submit', async (e) => {
         const data = await res.json();
 
         if (!res.ok) {
-            throw new Error(data.error || 'Something went wrong');
+            throw new Error(data.error?.message || data.error || 'Something went wrong');
         }
 
         // 显示 "已收到，正在生成中..."
