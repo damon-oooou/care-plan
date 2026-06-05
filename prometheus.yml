@@ -1,0 +1,10 @@
+scrape_configs:
+  - job_name: 'careplan'
+    # 每15秒抓一次指标
+    scrape_interval: 15s
+    static_configs:
+      # host.docker.internal 是 Docker 容器访问宿主机的地址（Windows/Mac）
+      # Linux 用户换成局域网 IP，例如：192.168.1.100:8080
+      - targets: ['host.docker.internal:8080']
+    # 指定抓取路径
+    metrics_path: '/actuator/prometheus'

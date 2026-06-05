@@ -7,6 +7,24 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
+  
+  # Prometheus：每15秒去抓 Spring Boot 暴露的指标
+  prometheus:
+      image: prom/prometheus
+      ports:
+        - "9090:9090"
+      volumes:
+        # 挂载本地配置文件到容器里
+        - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  # Grafana：读取 Prometheus 数据，做可视化图表
+  grafana:
+      image: grafana/grafana
+      ports:
+        - "3000:3000"
+      environment:
+        # 设置 Grafana 管理员密码
+        - GF_SECURITY_ADMIN_PASSWORD=admin
 
 volumes:
   redis-data:
