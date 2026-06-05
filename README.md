@@ -7,8 +7,9 @@ Specialty pharmacy Care Plan auto-generation system. Medical assistants enter pa
 - Java 17 + Spring Boot 3.4
 - Spring Data JPA + PostgreSQL
 - Redis (message queue)
-- Docker Compose (Redis container)
-- Anthropic Claude API (claude-haiku-4-5-20251001)
+- Docker Compose (Redis + Prometheus + Grafana)
+- LLM: pluggable via abstraction layer (default: Anthropic Claude claude-haiku-4-5-20251001)
+- Monitoring: Spring Boot Actuator + Prometheus + Grafana
 - Frontend: vanilla HTML/CSS/JS
 - Testing: JUnit 5 + Mockito + H2
 
@@ -18,7 +19,8 @@ Specialty pharmacy Care Plan auto-generation system. Medical assistants enter pa
 care-plan/
 ├── .github/workflows/
 │   └── ci.yml                                     # GitHub Actions CI
-├── docker-compose.yml                             # Redis container
+├── docker-compose.yml                             # Redis + Prometheus + Grafana
+├── prometheus.yml                                 # Prometheus scrape config
 ├── sql/
 │   ├── 01_schema.sql                              # Table creation (4 tables)
 │   ├── 02_mock_data.sql                           # Mock data
@@ -36,7 +38,12 @@ care-plan/
 │   │   └── OrderController.java                   # REST API endpoints
 │   ├── service/
 │   │   ├── OrderService.java                      # Business logic
-│   │   └── RedisQueueService.java                 # Redis queue wrapper
+│   │   ├── RedisQueueService.java                 # Redis queue wrapper
+│   │   └── llm/                                   # LLM abstraction layer
+│   │       ├── BaseLLMService.java                # Abstract base: defines generateCarePlan()
+│   │       ├── ClaudeService.java                 # Anthropic Claude implementation
+│   │       ├── OpenAIService.java                 # OpenAI implementation (placeholder)
+│   │       └── LLMServiceFactory.java             # @ConditionalOnProperty: selects provider at startup
 │   ├── dto/
 │   │   ├── InternalOrder.java                     # Unified internal format (all sources → this)
 │   │   ├── ExternalOrderRequest.java              # External intake request wrapper
@@ -59,7 +66,7 @@ care-plan/
 │   │   ├── WarningException.java                  # 200 - warnings (user can confirm)
 │   │   └── GlobalExceptionHandler.java            # Catches all exceptions, unified JSON
 │   └── worker/
-│       └── CarePlanWorker.java                    # Background worker (Redis → LLM → DB)
+│       └── CarePlanWorker.java                    # Background worker (Redis → LLMService → DB)
 ├── src/main/resources/
 │   ├── application.properties                     # App config (PostgreSQL, Redis, logging)
 │   └── static/
@@ -124,7 +131,40 @@ OrderRequest                        AdapterRouter
             Frontend polls GET /api/careplan/{id}/status
 ```
 
-## Multi-Source Intake
+## LLM Abstraction Layer
+
+Business code depends only on `BaseLLMService` and has no knowledge of the underlying provider. Switching LLMs requires only a config change — no code changes.
+
+### How it works
+
+1. `LLMServiceFactory` reads `llm.provider` from `application.properties` at startup
+2. `@ConditionalOnProperty` injects the matching implementation as a Spring Bean
+3. `CarePlanWorker` injects `BaseLLMService` — it never references Claude or OpenAI directly
+
+### Switching providers
+
+Change one line in `application.properties`:
+
+```properties
+llm.provider=openai   # was: claude
+```
+
+Restart the application. No other code changes needed.
+
+### Adding a new LLM
+
+1. Create `service/llm/GeminiService.java` extending `BaseLLMService`
+2. Add one `@Bean` + `@ConditionalOnProperty` entry in `LLMServiceFactory`
+3. Change `llm.provider=gemini` in config
+
+### Current providers
+
+| Provider | Class | Status |
+|----------|-------|--------|
+| claude | `ClaudeService` | Active |
+| openai | `OpenAIService` | Placeholder (implement `generateCarePlan()`) |
+
+
 
 Different hospitals and clinics send data in different formats. The Adapter pattern normalizes everything into `InternalOrder` before hitting business logic.
 
@@ -234,7 +274,7 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 ```
 
-### 4. Start Redis
+### 4. Start Redis + Prometheus + Grafana
 
 ```bash
 docker-compose up -d
@@ -329,6 +369,40 @@ Success (202):
 }
 ```
 
+## Monitoring
+
+Spring Boot Actuator exposes metrics, Prometheus scrapes them every 15 seconds, Grafana visualizes them.
+
+### Setup
+
+Already included in `docker-compose.yml`. After `docker-compose up -d`:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Prometheus | http://localhost:9090 | — |
+| Grafana | http://localhost:3000 | admin / admin |
+
+### Verify the pipeline
+
+1. Check Prometheus is scraping successfully: http://localhost:9090/targets — status should be **UP**
+2. Check raw metrics from Spring Boot: http://localhost:8080/actuator/prometheus
+
+### Grafana dashboard
+
+1. Login to Grafana → Connections → Data Sources → Add → Prometheus
+2. URL: `http://prometheus:9090` → Save & Test (should show ✅)
+3. Dashboards → Import → ID `19004` → select `prometheus` data source → Import
+
+### Key metrics available
+
+| Metric | What it shows |
+|--------|--------------|
+| `hikaricp_connections_active` | Database connection pool usage |
+| `http_server_requests_seconds` | API response time (P95) |
+| `jvm_memory_used_bytes` | JVM heap / non-heap memory |
+| `process_cpu_usage` | CPU usage |
+| `logback_events_total` | Error / warn log counts |
+
 ## CI/CD
 
 GitHub Actions runs all 58 tests on every push to `main` and on every pull request. Tests must pass before merging.
@@ -356,6 +430,8 @@ ERROR GlobalExceptionHandler - [adapter_parse] [clinic_b] Parse failed: Invalid 
 
 ## Version History
 
+- **v13** — Monitoring: Spring Boot Actuator + Prometheus + Grafana, dashboard ID 19004
+- **v12** — LLM abstraction layer: BaseLLMService, ClaudeService, OpenAIService, LLMServiceFactory; switch LLM via config only
 - **v11** — Multi-source intake: Adapter pattern, InternalOrder, ClinicBAdapter, HospitalAAdapter, 31 adapter tests
 - **v10** — GitHub Actions CI: auto-run all tests on push/PR
 - **v9** — Unit tests (17) + Integration tests (10), H2 test database
